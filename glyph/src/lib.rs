@@ -32,6 +32,7 @@ mod glyph;
 #[cfg(all(feature = "libm", not(feature = "std")))]
 mod nostd_float;
 mod outlined;
+mod paragraph;
 mod scale;
 mod ttfp;
 #[cfg(feature = "variable-fonts")]
@@ -46,6 +47,7 @@ pub use crate::{
     font::*,
     glyph::*,
     outlined::*,
+    paragraph::*,
     scale::*,
     ttfp::{FontRef, FontVec},
 };
