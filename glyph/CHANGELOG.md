@@ -1,3 +1,8 @@
+# Unreleased
+* Add `GPOS` pair kerning support: `Font::kern_unscaled` & `ScaleFont::kern` now use the
+  `kern` feature pair adjustments of fonts without a legacy `kern` table.
+  Fonts with a `kern` table are unchanged.
+
 # 0.2.32
 * Add `FontArc` support for no_std targets with cfg(target_has_atomic = "ptr").
 

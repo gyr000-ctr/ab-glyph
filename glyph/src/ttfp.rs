@@ -1,4 +1,5 @@
 //! ttf-parser crate specific code. ttf-parser types should not be leaked publicly.
+mod gpos;
 mod outliner;
 #[cfg(feature = "variable-fonts")]
 mod variable;
@@ -8,6 +9,7 @@ use alloc::boxed::Box;
 #[cfg(not(feature = "std"))]
 use alloc::vec::Vec;
 use core::fmt;
+use gpos::PairKerning;
 use owned_ttf_parser::{self as ttfp, AsFaceRef};
 
 impl From<GlyphId> for ttfp::GlyphId {
@@ -33,7 +35,11 @@ impl From<GlyphId> for ttfp::GlyphId {
 /// # Ok(()) }
 /// ```
 #[derive(Clone)]
-pub struct FontRef<'font>(ttfp::PreParsedSubtables<'font, ttfp::Face<'font>>);
+pub struct FontRef<'font> {
+    face: ttfp::PreParsedSubtables<'font, ttfp::Face<'font>>,
+    /// GPOS pair kerning, pre-parsed once per font.
+    pair_kerning: PairKerning,
+}
 
 impl fmt::Debug for FontRef<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -74,9 +80,12 @@ impl<'font> FontRef<'font> {
     /// ```
     #[inline]
     pub fn try_from_slice_and_index(data: &'font [u8], index: u32) -> Result<Self, InvalidFont> {
-        Ok(Self(ttfp::PreParsedSubtables::from(
-            ttfp::Face::parse(data, index).map_err(|_| InvalidFont)?,
-        )))
+        let face = ttfp::Face::parse(data, index).map_err(|_| InvalidFont)?;
+        let pair_kerning = PairKerning::parse(data, index, face.number_of_glyphs() as usize);
+        Ok(Self {
+            face: ttfp::PreParsedSubtables::from(face),
+            pair_kerning,
+        })
     }
 }
 
@@ -96,7 +105,11 @@ impl<'font> FontRef<'font> {
 /// assert_eq!(font.glyph_id('s'), ab_glyph::GlyphId(56));
 /// # Ok(()) }
 /// ```
-pub struct FontVec(ttfp::PreParsedSubtables<'static, ttfp::OwnedFace>);
+pub struct FontVec {
+    face: ttfp::PreParsedSubtables<'static, ttfp::OwnedFace>,
+    /// GPOS pair kerning, pre-parsed once per font.
+    pair_kerning: PairKerning,
+}
 
 impl fmt::Debug for FontVec {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -138,9 +151,13 @@ impl FontVec {
     /// ```
     #[inline]
     pub fn try_from_vec_and_index(data: Vec<u8>, index: u32) -> Result<Self, InvalidFont> {
-        Ok(Self(ttfp::PreParsedSubtables::from(
-            ttfp::OwnedFace::from_vec(data, index).map_err(|_| InvalidFont)?,
-        )))
+        let face = ttfp::OwnedFace::from_vec(data, index).map_err(|_| InvalidFont)?;
+        let glyph_count = face.as_face_ref().number_of_glyphs() as usize;
+        let pair_kerning = PairKerning::parse(face.as_slice(), index, glyph_count);
+        Ok(Self {
+            face: ttfp::PreParsedSubtables::from(face),
+            pair_kerning,
+        })
     }
 
     /// Extracts a slice containing the data passed into e.g. [`FontVec::try_from_vec`].
@@ -157,7 +174,7 @@ impl FontVec {
     /// ```
     #[inline]
     pub fn as_slice(&self) -> &[u8] {
-        self.0.face.as_slice()
+        self.face.face.as_slice()
     }
 
     /// Unwraps the data passed into e.g. [`FontVec::try_from_vec`].
@@ -174,7 +191,7 @@ impl FontVec {
     /// ```
     #[inline]
     pub fn into_vec(self) -> Vec<u8> {
-        self.0.face.into_vec()
+        self.face.face.into_vec()
     }
 }
 
@@ -185,39 +202,39 @@ macro_rules! impl_font {
             #[inline]
             fn units_per_em(&self) -> Option<f32> {
                 // TODO unwrap signature when making next breaking change
-                Some(self.0.as_face_ref().units_per_em().into())
+                Some(self.face.as_face_ref().units_per_em().into())
             }
 
             #[inline]
             fn ascent_unscaled(&self) -> f32 {
-                self.0.as_face_ref().ascender().into()
+                self.face.as_face_ref().ascender().into()
             }
 
             #[inline]
             fn descent_unscaled(&self) -> f32 {
-                self.0.as_face_ref().descender().into()
+                self.face.as_face_ref().descender().into()
             }
 
             #[inline]
             fn line_gap_unscaled(&self) -> f32 {
-                self.0.as_face_ref().line_gap().into()
+                self.face.as_face_ref().line_gap().into()
             }
 
             #[inline]
             fn italic_angle(&self) -> f32 {
-                self.0.as_face_ref().italic_angle()
+                self.face.as_face_ref().italic_angle()
             }
 
             #[inline]
             fn glyph_id(&self, c: char) -> GlyphId {
                 // Note: Using `PreParsedSubtables` method for better performance.
-                let index = self.0.glyph_index(c).map(|id| id.0).unwrap_or(0);
+                let index = self.face.glyph_index(c).map(|id| id.0).unwrap_or(0);
                 GlyphId(index)
             }
 
             #[inline]
             fn h_advance_unscaled(&self, id: GlyphId) -> f32 {
-                self.0
+                self.face
                     .as_face_ref()
                     .glyph_hor_advance(id.into())
                     .unwrap_or_default()
@@ -226,7 +243,7 @@ macro_rules! impl_font {
 
             #[inline]
             fn h_side_bearing_unscaled(&self, id: GlyphId) -> f32 {
-                self.0
+                self.face
                     .as_face_ref()
                     .glyph_hor_side_bearing(id.into())
                     .unwrap_or_default()
@@ -235,7 +252,7 @@ macro_rules! impl_font {
 
             #[inline]
             fn v_advance_unscaled(&self, id: GlyphId) -> f32 {
-                self.0
+                self.face
                     .as_face_ref()
                     .glyph_ver_advance(id.into())
                     .unwrap_or_default()
@@ -244,7 +261,7 @@ macro_rules! impl_font {
 
             #[inline]
             fn v_side_bearing_unscaled(&self, id: GlyphId) -> f32 {
-                self.0
+                self.face
                     .as_face_ref()
                     .glyph_ver_side_bearing(id.into())
                     .unwrap_or_default()
@@ -253,11 +270,12 @@ macro_rules! impl_font {
 
             #[inline]
             fn kern_unscaled(&self, first: GlyphId, second: GlyphId) -> f32 {
-                // Note: Using `PreParsedSubtables` method for better performance.
-                self.0
+                // Legacy `kern` table values take precedence, when present.
+                let legacy = self
+                    .face
                     .glyphs_hor_kerning(first.into(), second.into())
-                    .map(f32::from)
-                    .unwrap_or_default()
+                    .map(f32::from);
+                legacy.unwrap_or_else(|| self.pair_kerning.adjust(first.0, second.0) as f32)
             }
 
             fn outline(&self, id: GlyphId) -> Option<Outline> {
@@ -269,7 +287,7 @@ macro_rules! impl_font {
                     y_min,
                     y_max,
                 } = self
-                    .0
+                    .face
                     .as_face_ref()
                     .outline_glyph(id.into(), &mut outliner)
                     // invalid bounds are treated as having no outline
@@ -287,11 +305,11 @@ macro_rules! impl_font {
 
             #[inline]
             fn glyph_count(&self) -> usize {
-                self.0.as_face_ref().number_of_glyphs() as _
+                self.face.as_face_ref().number_of_glyphs() as _
             }
 
             fn codepoint_ids(&self) -> crate::CodepointIdIter<'_> {
-                let face_ref = self.0.as_face_ref();
+                let face_ref = self.face.as_face_ref();
 
                 #[cfg(feature = "std")]
                 let mut used_indices =
@@ -327,7 +345,10 @@ macro_rules! impl_font {
             fn glyph_raster_image2(&self, id: GlyphId, size: u16) -> Option<v2::GlyphImage<'_>> {
                 use GlyphImageFormat::*;
 
-                let img = self.0.as_face_ref().glyph_raster_image(id.into(), size)?;
+                let img = self
+                    .face
+                    .as_face_ref()
+                    .glyph_raster_image(id.into(), size)?;
                 Some(v2::GlyphImage {
                     origin: point(img.x.into(), img.y.into()),
                     width: img.width,
@@ -349,7 +370,7 @@ macro_rules! impl_font {
             }
 
             fn glyph_svg_image(&self, id: GlyphId) -> Option<GlyphSvg<'_>> {
-                let img = self.0.as_face_ref().glyph_svg_image(id.into())?;
+                let img = self.face.as_face_ref().glyph_svg_image(id.into())?;
 
                 Some(GlyphSvg {
                     data: img.data,
@@ -360,7 +381,7 @@ macro_rules! impl_font {
 
             #[inline]
             fn font_data(&self) -> &[u8] {
-                self.0.as_face_ref().raw_face().data
+                self.face.as_face_ref().raw_face().data
             }
         }
     };

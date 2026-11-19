@@ -159,6 +159,10 @@ pub trait Font {
 
     /// Returns additional unscaled kerning to apply for a particular pair of glyph ids.
     ///
+    /// Kerning is taken from the font's legacy `kern` table when present. Fonts
+    /// without one, such as many modern OpenType fonts, use the `kern` feature
+    /// pair adjustments of the `GPOS` table instead.
+    ///
     /// Scaling can be done with [`as_scaled`](Self::as_scaled).
     fn kern_unscaled(&self, first: GlyphId, second: GlyphId) -> f32;
 

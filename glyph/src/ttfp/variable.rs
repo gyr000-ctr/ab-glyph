@@ -8,31 +8,31 @@ impl VariableFont for FontRef<'_> {
         let tag = ttfp::Tag::from_bytes(axis);
         // TODO remove existence check in next breaking version
         let exists = self
-            .0
+            .face
             .as_face_ref()
             .variation_axes()
             .into_iter()
             .any(|axis| axis.tag == tag);
         if exists {
-            self.0.set_variation(tag, value);
+            self.face.set_variation(tag, value);
         }
         exists
     }
 
     fn variations(&self) -> Vec<VariationAxis> {
-        variations(self.0.as_face_ref())
+        variations(self.face.as_face_ref())
     }
 }
 
 impl VariableFont for FontVec {
     fn set_variation(&mut self, axis: &[u8; 4], value: f32) -> bool {
-        self.0
+        self.face
             .set_variation(ttfp::Tag::from_bytes(axis), value)
             .is_some()
     }
 
     fn variations(&self) -> Vec<VariationAxis> {
-        variations(self.0.as_face_ref())
+        variations(self.face.as_face_ref())
     }
 }
 
